@@ -23,3 +23,5 @@
 *.pptx
 
 *.h5
+*.DS_Store
+*.conf.saved
