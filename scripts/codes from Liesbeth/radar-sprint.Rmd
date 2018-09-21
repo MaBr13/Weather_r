@@ -1,0 +1,54 @@
+
+```{r}
+##raw data: pvol##
+#load library
+library(bioRad)
+#read in pvols
+pvol1 <- read.pvol("./data/data_raw/2016/10/04/nldbl_pvol_20161004T0215Z_0x7.h5")
+pvol2 <- read.pvol("./data/data_raw/2016/10/04/nldhl_pvol_20161004T0215Z_0x7.h5")
+#look what's inside
+pvol$scans[[1]]$attributes$where
+
+#extract scans
+scan1 <- pvol1$scans[[2]]
+scan2 <- pvol2$scans[[2]]
+
+#create ppi's
+ppi1 <- ppi(scan1, range.max=100000)
+ppi2 <- ppi(scan2, range.max=100000)
+
+#make composite
+comp <- composite(list(ppi1, ppi2))
+
+#plot
+plot(ppi)
+plot(comp)
+bmap <- basemap(comp)
+map(comp, bmap)
+
+#additional nice features
+elangle(scan)
+scan$attributes$where$elangle
+
+beamheight()
+beamwidth()
+```
+
+vol2bird
+
+```{r}
+##bird profiles: vp##
+#retrieve vp locations
+retrieve_vp_paths(path="./data/data_vp/2016/", start_date = "2016-09-01", end_date = "2016-09-02", country = c("nl"), radar=c("dhl"))
+
+#read vp's
+readvp.list()
+
+#put in ts
+ts <- vpts(list.vp[[1]])
+#make regular time series
+regts <- regularize(ts)
+#plot
+plot(regts)
+plot(vintegrate(regts))
+```
