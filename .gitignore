@@ -25,3 +25,5 @@
 *.h5
 *.DS_Store
 *.conf.saved
+*.Rproj.user
+*.zip
