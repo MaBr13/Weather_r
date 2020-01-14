@@ -27,3 +27,7 @@
 *.conf.saved
 *.Rproj.user
 *.zip
+*.Rproj.user
+*.gif
+*.mp4
+
