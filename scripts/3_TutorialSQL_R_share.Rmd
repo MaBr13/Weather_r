@@ -1,0 +1,386 @@
+---
+title: "SQL R Tutorial for meteo_radar"
+author: "Johannes De Groeve"
+date: "09/01/2019"
+output: html_document
+---
+
+### Database Connection Parameters 
+```{sql eval=FALSE}
+-- host ibedb.science.uva.nl
+-- port 5432
+-- database meteo_radar
+```
+
+### psql queries 
+
+#### Query tables 
+```{sql eval=FALSE}
+SELECT * FROM main.radar_odim;
+SELECT * FROM main.radar_sensor;
+SELECT * FROM main.vp_file;
+SELECT * FROM main.vp_data;
+SELECT * FROM main.vp_settings;
+```
+
+
+#### Check odim_code_id 
+```{sql eval=FALSE}
+SELECT * FROM main.radar_odim ORDER BY country_code;
+```
+
+#### How many odims have data in the db? 
+```{sql eval=FALSE}
+SELECT count(*) FROM main.radar_odim WHERE vp_in_db != 0;
+```
+
+#### How many vp files are in the db for those odims? 
+```{sql eval=FALSE}
+SELECT odim_code, vp_in_db FROM main.radar_odim WHERE vp_in_db != 0;
+-- OR 
+SELECT radar_odim_id, count(*) 
+FROM main.vp_file   
+JOIN main.radar_sensor USING (radar_sensor_id)  
+GROUP BY radar_odim_id;
+-- OR, you could also use a shortcut to the odim_code
+SELECT left(vp_file_original_name,5) odim_code, count(*) FROM main.vp_file GROUP BY odim_code;
+```
+
+#### Did sensor values of the location (odim) change over time?  
+```{sql eval=FALSE}
+SELECT count(*), odim_code 
+FROM main.radar_odim JOIN main.radar_sensor USING (radar_odim_id) 
+GROUP BY odim_code
+HAVING count(*) > 1;
+```
+
+#### How many vp files are in the db for a country?  
+```{sql eval=FALSE}
+SELECT country_code, sum(vp_in_db) FROM main.radar_odim WHERE vp_in_db != 0 GROUP BY country_code;
+-- OR 
+SELECT country_code, count(*) 
+FROM main.vp_file   
+JOIN main.radar_sensor USING (radar_sensor_id)
+JOIN main.radar_odim USING (radar_odim_id)
+GROUP BY country_code;
+-- OR, you could also use the same shortcut but only extract the 2 first letters from the file name 
+SELECT left(vp_file_original_name,2) country_code, count(*) FROM main.vp_file GROUP BY country_code;
+```
+
+#### Shortcut to odim code from the vp_file table 
+```{sql eval=FALSE}
+-- If you want a shortcut to know the odim code for a radar you can also do the following 
+-- (because the file name is includes the odim code, we can find this information also in the table vp_file)
+SELECT * FROM main.vp_file WHERE vp_file_original_name like ('nldhl%');
+SELECT * FROM main.vp_file WHERE left(vp_file_original_name,5) in ('nldhl', 'nldbl');
+```
+
+#### How many vp files are in the db per month per odim? 
+```{sql eval=FALSE}
+SELECT radar_odim_id, extract(month from start_time) monthx, count(*) 
+FROM main.vp_file   
+JOIN main.radar_sensor USING (radar_sensor_id)  
+GROUP BY radar_odim_id, extract(month from start_time);
+-- OR
+SELECT left(vp_file_original_name,5) odim_code, extract(month from start_time) monthx, count(*) 
+FROM main.vp_file 
+GROUP BY odim_code, extract(month from start_time);
+```
+
+#### How many vp files are in the db per month? 
+```{sql eval=FALSE}
+SELECT extract(month from start_time) monthx, count(*) 
+FROM main.vp_file GROUP BY extract(month from start_time);
+```
+
+#### How many altitude bins are there in each file? 
+```{sql eval=FALSE}
+SELECT count(*), vp_file_id 
+FROM main.vp_data
+GROUP BY vp_file_id; 
+```
+
+#### Are there differences in number of altitude bins between files? 
+```{sql eval=FALSE}
+SELECT DISTINCT count(*)
+FROM main.vp_data
+GROUP BY vp_file_id;
+```
+
+#### What is the odim_code_id of the files that have less than 20 bins? 
+```{sql eval=FALSE}
+SELECT DISTINCT radar_odim_id FROM 
+  (
+  SELECT count(*), vp_file_id 
+  FROM main.vp_data 
+  GROUP BY vp_file_id 
+  HAVING count(*) <= 20
+  ) x
+JOIN main.vp_file using (vp_file_id) 
+JOIN main.radar_sensor USING (radar_sensor_id);
+-- OR, again with the shortcut 
+SELECT DISTINCT left(vp_file_original_name,5) odim_code, count FROM 
+  (
+  SELECT count(*), vp_file_id 
+  FROM main.vp_data 
+  GROUP BY vp_file_id 
+  HAVING count(*) <= 20
+  ) x
+JOIN main.vp_file using (vp_file_id);
+-- OR, even shorter
+SELECT DISTINCT count(*), left(vp_file_original_name,5) odim_code 
+FROM main.vp_data JOIN main.vp_file USING (vp_file_id)
+GROUP BY vp_file_id, odim_code
+HAVING count(*) <= 20
+```
+
+#### Join including all the tables 
+```{sql eval=FALSE}
+SELECT a.*, start_time, end_time, odim_code, radar_sensor_id, country_code, longitude, latitude
+FROM main.vp_data a 
+JOIN main.vp_file USING (vp_file_id) 
+JOIN main.radar_sensor USING (radar_sensor_id) 
+JOIN main.radar_odim USING (radar_odim_id)
+WHERE odim_code = 'nldhl';
+
+```
+
+#### Queries on the integrated_profile view 
+```{sql eval=FALSE}
+-- RUN VIEW THAT CALCULATES INTEGRATED PROFILE
+SELECT * FROM main.integrate_profile;
+
+-- ONLY SELECT INTEGRATED PROFILES FOR FEBRUARY
+SELECT * FROM main.integrate_profile WHERE extract(month from vp_time) = 2;
+
+-- ONLY SELECT INTEGRATED PROFILES BETWEEN FEBRUARY AND MAY
+SELECT * FROM main.integrate_profile WHERE extract(month from vp_time) BETWEEN 2 and 5;
+
+-- ONLY FOR A SPECIFIC ODIM CODE
+SELECT * FROM main.integrate_profile WHERE odim_code = 'nldhl';
+```
+
+### R 
+
+#### Query data in the database and plot mtr 
+```{R eval=FALSE}
+# Load packages
+library(RPostgreSQL)
+library(bioRad)
+
+#####################################################################
+
+# Connect to the database 
+con <- dbConnect("PostgreSQL", 
+                 dbname="meteo_radar", 
+                 host="ibedb.science.uva.nl", 
+                 user='<username>', 
+                 password= '<password>') 
+
+#####################################################################
+
+# Query the database (example: mtr of bejab in February)
+query <- "SELECT vp_time, odim_code, mtr, extract(month FROM vp_time) monthx 
+          FROM main.integrate_profile 
+          WHERE odim_Code in ('bejab') AND 
+          extract(year FROM vp_time) = 2018 AND 
+          extract(month FROM vp_time) = 2"
+vp <- dbGetQuery(con, query)
+
+# Plot mtr 
+plot(x=vp$vp_time, 
+     y=vp$mtr, 
+     type='l',
+     main=paste0('mtr ',unique(vp$odim_code),' month ', unique(vp$monthx)))
+
+#####################################################################
+
+# Plot mtr for all months in 2018
+par(mfrow=c(2,6), mar=c(2,1,2,1))
+vp_l<-list(data.frame())
+for(i in 1:12){ 
+  # extract mtr for all available months 
+  query <- paste0("SELECT vp_time, odim_code, mtr, extract(month FROM vp_time) monthx 
+          FROM main.integrate_profile 
+          WHERE odim_Code in ('bejab') AND 
+          extract(year FROM vp_time) = 2018 AND 
+          extract(month FROM vp_time) = ",i)
+  vp <- dbGetQuery(con, query)
+  
+  # Plot mtr each month in separate panel
+  if(nrow(vp) == 0){
+  plot(x=0:1,y=0:1,col='white', xlab = NA, ylab=NA,axes=FALSE)
+  } else {
+  # plot mtr 
+  plot(x=vp$vp_time, 
+       y=vp$mtr, 
+       type='l',
+       main=paste0('mtr ',unique(vp$odim_code),' month ', unique(vp$monthx)),
+       xlab=NA, ylab=NA)
+  }
+  # calculate the maximum mtr value 
+  if(i == 1){if(nrow(vp)==0){mtrmax <- 0} else {mtrmax <- max(vp$mtr)}}
+  if(i != 1){if(nrow(vp)==0){mtri <- 0} else { mtri <- max(vp$mtr)}}
+  
+  if(mtri > mtrmax){mtrmax <- mtri}
+  
+  vp_l[[i]] <- vp
+}
+
+#####################################################################
+
+# Plot mtr for all months in 2018 (y-axis limits based on maximum mtr)
+par(mfrow=c(2,6), mar=c(2,1,2,1))
+for(i in 1:12){ 
+  vp <- vp_l[[i]]
+  
+  # Plot mtr each month in separate panel
+  if(nrow(vp) == 0){
+  plot(x=0:1,y=0:1,col='white', xlab = NA, ylab=NA,axes=FALSE)
+  } else {
+  # plot mtr 
+  plot(x=vp$vp_time, 
+       y=vp$mtr, 
+       type='l',
+       ylim=c(0,mtrmax),
+       main=paste0('mtr ',unique(vp$odim_code),' month ', unique(vp$monthx)),
+       xlab=NA, ylab=NA)
+  }
+}
+
+#####################################################################
+
+# Plot mtr for all months in 2018 for all radars
+query <- paste0("SELECT DISTINCT left(vp_file_original_name,5) odim_code FROM main.vp_file")
+odim_codes <- as.vector(unlist(dbGetQuery(con, query)))
+  
+for (k in odim_codes){
+mtri<-0
+mtrmax<-0
+vp_l<-list(data.frame())
+for(i in 1:12){ 
+  # extract mtr for all available months 
+  query <- paste0("SELECT vp_time, odim_code, mtr, extract(month FROM vp_time) monthx 
+          FROM main.integrate_profile 
+          WHERE odim_Code in ('",k,"') AND 
+          extract(year FROM vp_time) = 2018 AND 
+          extract(month FROM vp_time) = ",i)
+  vp <- dbGetQuery(con, query)
+  
+  # calculate the maximum mtr value 
+  if(i == 1){if(nrow(vp)==0){mtrmax <- 0} else {mtrmax <- max(vp$mtr)}}
+  if(i != 1){if(nrow(vp)==0){mtri <- 0} else { mtri <- max(vp$mtr)}}
+  
+  if(mtri > mtrmax){mtrmax <- mtri}
+  vp_l[[i]] <- vp
+}
+
+# Plot mtr for all months in 2018 (y-axis limits based on maximum mtr)
+par(mfrow=c(2,6), mar=c(2,1,2,1))
+for(i in 1:12){ 
+  vp <- vp_l[[i]]
+  
+  # Plot mtr each month in separate panel
+  if(nrow(vp) == 0){
+  plot(x=0:1,y=0:1,col='white', xlab = NA, ylab=NA,axes=FALSE)
+  } else {
+  # plot mtr 
+  plot(x=vp$vp_time, 
+       y=vp$mtr, 
+       type='l',
+       ylim=c(0,mtrmax),
+       main=paste0('mtr ',unique(vp$odim_code),' month ', unique(vp$monthx)),
+       xlab=NA, ylab=NA)
+  }
+}
+}
+
+
+# disconnect from the database
+lapply(dbListConnections(drv = dbDriver("PostgreSQL")), function(x) {dbDisconnect(conn = con)})
+  
+```
+
+
+#### Reconstruct vp files to use functionality of bioRad 
+```{R eval=FALSE}
+# Load function to reconstruct vp 
+
+#  This function allows to reconstruct a vp. There is an option to  #
+#  simplify the vp (vp_complete=TRUE) which loads vps much faster.  #
+#  The function allows to filter the database on odim_code, time    #
+#  and vp_file_id. It is also possible to specify your own query    #
+
+source(paste0(getwd(),'/R/pg_retrieve_vp.R'))
+
+#####################################################################
+
+# Connect to the database 
+con <- dbConnect("PostgreSQL", 
+                 dbname="meteo_radar", 
+                 host="ibedb.science.uva.nl", 
+                 user='<username>', 
+                 password= '<password>') 
+
+#####################################################################
+
+# SELECT BY TIME INTERVAL
+data1b <- pg_retrieve_vp(conn=con, 
+                         time_interval = c('2018-02-01','2018-02-02'),
+                         vp_complete=FALSE)
+data1a <- pg_retrieve_vp(conn=con, 
+                         time_interval = c('2018-02-01','2018-02-02'))
+
+# SELECT BY ODIM AND TIME INTERVAL
+data2b <- pg_retrieve_vp(conn=con, 
+                         odim_code = 'bejab', 
+                         time_interval = c('2018-02-01','2018-02-02'),
+                         vp_complete=FALSE)
+data2a <- pg_retrieve_vp(conn=con, odim_code = 'bejab', 
+                         time_interval = c('2018-02-01','2018-02-02'))
+
+# SELECT BY ODIM CODE
+data3b <- pg_retrieve_vp(conn=con, 
+                         odim_code = 'bejab',
+                         vp_complete=FALSE) 
+data3a <- pg_retrieve_vp(conn=con, 
+                         odim_code = 'bejab') # slow!
+
+# SELECT BY VP_FILE_ID
+data4b <- pg_retrieve_vp(conn=con, 
+                         vp_file_id = 1:100,
+                         vp_complete=FALSE)
+data4a <- pg_retrieve_vp(conn=con, 
+                         vp_file_id = 1:100)
+
+# RANDOM SAMPLE OF 1000 VPs
+sql <- glue::glue_sql("SELECT vp_data.ff,vp_data.dbz,vp_data.dens,vp_data.u,vp_data.v,gap,w,n_dbz,vp_data.dd,n,dbzh,
+                           vp_data.hght,n_dbz_all,eta,sd_vvp,n_all,interval,left(vp_file_original_name,5) odim, vp_time, 
+                           vp_file_id
+                           FROM main.vp_data JOIN main.vp_file USING (vp_file_id) JOIN main.radar_sensor USING (radar_sensor_id)
+                           ORDER BY random() LIMIT 1000",.con=conn)
+data5 <- pg_retrieve_vp(conn=con, 
+                        query=sql, 
+                        vp_complete = FALSE)
+
+# calculate integrate_profiles
+vp_int1b <- do.call(rbind.data.frame,lapply(data1b, function(x) integrate_profile(x)))
+vp_int1a <- do.call(rbind.data.frame,lapply(data1a, function(x) integrate_profile(x)))
+
+vp_int2b <- do.call(rbind.data.frame,lapply(data2b, function(x) integrate_profile(x)))
+vp_int2a <- do.call(rbind.data.frame,lapply(data2a, function(x) integrate_profile(x)))
+
+vp_int3b <- do.call(rbind.data.frame,lapply(data3b, function(x) integrate_profile(x)))
+vp_int3a <- do.call(rbind.data.frame,lapply(data3a, function(x) integrate_profile(x)))
+
+vp_int4b <- do.call(rbind.data.frame,lapply(data4b, function(x) integrate_profile(x)))
+vp_int4a <- do.call(rbind.data.frame,lapply(data4a, function(x) integrate_profile(x)))
+
+# disconnect from the database
+lapply(dbListConnections(drv = dbDriver("PostgreSQL")), function(x) {dbDisconnect(conn = con)})
+```
+
+
+
+
+

@@ -1,0 +1,67 @@
+---
+title: "Altitude exploration Den Helder"
+author: "M. Bradaric"
+output:
+  html_document:
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(plotly)
+track <- read.csv("C:/Users/mbradar/Documents/Weather_r/data/idd_autumn2019DHL.csv", sep=";")
+track$dir_rad <- track$trdir_rad
+track$dir_deg <- track$trdir_deg
+track$coh <- with(track,ifelse(dir_deg>=192 & dir_deg<=213,"SSW",
+                               ifelse(dir_deg>=214 & dir_deg<=236,"SW",
+                                      ifelse(dir_deg>=237 & dir_deg<=258, "WSW",
+                                             ifelse(dir_deg>=259 & dir_deg<=281, "W",
+                                                    ifelse(dir_deg>=282 & dir_deg<=303, "WNW",
+                                                           ifelse(dir_deg>=304 & dir_deg<= 326, "NW", "Other")))))))
+track1 <- subset(track,coh!="Other")
+```
+
+###Cohorts during season
+```{r}
+plot_ly(
+  x = track1$coh,
+  y= track1$dens,
+  type = "bar"
+)
+
+```
+
+###Cohorts at different altitudes
+```{r}
+fig <- plot_ly(y=track1$height, x=track1$dens,type = "bar", color=track1$coh, orientation="h")
+fig <- fig %>% layout(
+  barmode="stack",
+  bargap=0.1)
+fig
+```
+
+##Different categories for cohorts
+
+```{r}
+track$coh <- with(track,ifelse(dir_deg>=192 & dir_deg<=236,"SW",
+                                      ifelse(dir_deg>=237 & dir_deg<=303, "W", "Other")))
+track2 <- subset(track,coh!="Other")
+plot_ly(
+  x = track2$coh,
+  y= track2$dens,
+  type = "bar"
+)
+```
+
+###Cohorts at different altitudes
+```{r}
+fig3 <- plot_ly(y=track2$height, x=track2$dens, type = "bar", color=track2$coh, orientation="h")
+fig3 <- fig3 %>% layout(
+  barmode="stack",
+  bargap=0.1)
+fig3
+```
+
